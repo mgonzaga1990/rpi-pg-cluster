@@ -1,9 +1,10 @@
 FROM postgres:9.6
-MAINTAINER Daniel Dent (https://www.danieldent.com)
+MAINTAINER Mark Jayson Gonzaga
+
 ENV PG_MAX_WAL_SENDERS 8
 ENV PG_WAL_KEEP_SEGMENTS 8
 
-RUN apt-get update && apt-get install iputils-ping -y
+RUN apt-get update && apt-get install iputils-ping dnsutils -y
 
 COPY setup-replication.sh /docker-entrypoint-initdb.d/
 COPY docker-entrypoint.sh /docker-entrypoint.sh

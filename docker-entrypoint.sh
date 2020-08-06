@@ -13,6 +13,9 @@ if [ "x$PGPASSWORD" = "x" ]; then
     export PGPASSWORD=$POSTGRES_PASSWORD
 fi
 
+echo "Validating Master Host"
+MASTER_HOST=$(nslookup pg-master-0.pg-master-headless | awk 'FNR == 5 {print $2}')
+
 # Based on official postgres package's entrypoint script (https://hub.docker.com/_/postgres/)
 # Modified to be able to set up a slave. The docker-entrypoint-initdb.d hook provided is inadequate.
 
@@ -34,14 +37,16 @@ if [ "$1" = 'postgres' ]; then
 	# look specifically for PG_VERSION, as it is expected in the DB dir
 	if [ ! -s "$PGDATA/PG_VERSION" ]; then
 	    if [ "x$MASTER_HOST" == "x" ]; then
+                echo "No Master Host Found"
 		eval "gosu postgres initdb $POSTGRES_INITDB_ARGS"
 	    else
+                echo "Master host found : " ${MASTER_HOST}
             	until ping -c 1 -W 1 ${MASTER_HOST}
             	do
                 	echo "Waiting for master to ping..."
                 	sleep 1s
             	done
-            	until gosu postgres pg_basebackup -h ${MASTER_HOST} -p ${MASTER_PORT} -D ${PGDATA} -U ${POSTGRES_USER} -vP -w
+            	until gosu postgres pg_basebackup -h ${MASTER_HOST} -p 5432 -D ${PGDATA} -U postgres -w 
             	do
                 	echo "Waiting for master to connect..."
                 	sleep 1s
@@ -67,7 +72,7 @@ if [ "$1" = 'postgres' ]; then
  		RECOVERY_PATH=${PGDATA}/recovery.conf
  		cat >> ${RECOVERY_PATH}
  		echo "standby_mode = 'on'" >> ${RECOVERY_PATH}
- 		echo "primary_conninfo = 'host=${MASTER_HOST} port=${MASTER_PORT} user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}'" >> ${RECOVERY_PATH}
+ 		echo "primary_conninfo = 'host=${MASTER_HOST} port=5432 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}'" >> ${RECOVERY_PATH}
  		echo "restore_command = 'cp ${PGDATA}/archive/%f %p'" >> ${RECOVERY_PATH}
 		echo "trigger_file = '/tmp/postgresql.trigger.5432'" >> ${RECOVERY_PATH}
  		chmod +rwx ${RECOVERY_PATH}
