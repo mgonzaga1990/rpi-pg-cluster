@@ -34,8 +34,34 @@ if [ "$1" = 'postgres' ]; then
 	chmod g+s /run/postgresql
 	chown -R postgres /run/postgresql
 
-	# look specifically for PG_VERSION, as it is expected in the DB dir
-	if [ ! -s "$PGDATA/PG_VERSION" ]; then
+	# look specifically for PGK8s, 
+        #as it is expected in the DB dir if this has been ran before
+	if [  -f ${PGDATA}/PGK8S.txt ]; then
+          echo "Revalidating master host"
+	  if [ "x$MASTER_HOST" != "x" ]; then
+	    RECOVERY_PATH=${PGDATA}/recovery.conf
+	    echo "Master detected : " $MASTER_HOST
+
+ 	    if [ -f $RECOVERY_PATH ]; then
+		echo "Re-creating recovery.conf file in ${PGDATA}"
+  		echo "Deleting existing recovery file"
+  		rm $RECOVERY_PATH;
+
+		cat >> ${RECOVERY_PATH}
+		echo "standby_mode = 'on'" >> ${RECOVERY_PATH}
+		echo "primary_conninfo = 'host=${MASTER_HOST} port=5432 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}'" >> ${RECOVERY_PATH}
+		echo "restore_command = 'cp ${PGDATA}/archive/%f %p'" >> ${RECOVERY_PATH}
+		echo "trigger_file = '/tmp/postgresql.trigger.5432'" >> ${RECOVERY_PATH}
+		chmod +rwx ${RECOVERY_PATH}
+		
+		echo "Creation done. . . "
+	    fi
+
+		echo '======================================================================================'
+		echo 'PostgreSQL Database directory appears to contain a database; Skipping initialization  '
+		echo '======================================================================================'
+	  fi
+        else
 	    if [ "x$MASTER_HOST" == "x" ]; then
                 echo "No Master Host Found"
 		eval "gosu postgres initdb $POSTGRES_INITDB_ARGS"
@@ -155,12 +181,14 @@ if [ "$1" = 'postgres' ]; then
 	if [ "x$MASTER_HOST" == "x" ]; then
 		gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
 	fi
-
-		echo
+		echo '======================================================'
 		echo 'PostgreSQL init process complete; ready for start up.'
-		echo
+		echo '======================================================'
 	fi
 
+ 	echo "Creating flag file"
+        touch ${PGDATA}/PGK8S.txt
+	
 	exec gosu postgres "$@"
 fi
 
