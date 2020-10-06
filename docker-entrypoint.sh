@@ -1,112 +1,68 @@
-#!/bin/bash
-
-# Backwards compatibility for old variable names (deprecated)
-if [ "x$PGUSER"     != "x" ]; then
-    POSTGRES_USER=$PGUSER
-fi
-if [ "x$PGPASSWORD" != "x" ]; then
-    POSTGRES_PASSWORD=$PGPASSWORD
-fi
-
-# Forwards-compatibility for old variable names (pg_basebackup uses them)
-if [ "x$PGPASSWORD" = "x" ]; then
-    export PGPASSWORD=$POSTGRES_PASSWORD
-fi
-
-echo "Validating Master Host"
-MASTER_HOST=$(nslookup pg-master-0.pg-master-headless | awk 'FNR == 5 {print $2}')
-
-# Based on official postgres package's entrypoint script (https://hub.docker.com/_/postgres/)
-# Modified to be able to set up a slave. The docker-entrypoint-initdb.d hook provided is inadequate.
-
+#!/usr/bin/env bash
 set -e
+
+# usage: file_env VAR [DEFAULT]
+#    ie: file_env 'XYZ_DB_PASSWORD' 'example'
+# (will allow for "$XYZ_DB_PASSWORD_FILE" to fill in the value of
+#  "$XYZ_DB_PASSWORD" from a file, especially for Docker's secrets feature)
+file_env() {
+	local var="$1"
+	local fileVar="${var}_FILE"
+	local def="${2:-}"
+	if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
+		echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
+		exit 1
+	fi
+	local val="$def"
+	if [ "${!var:-}" ]; then
+		val="${!var}"
+	elif [ "${!fileVar:-}" ]; then
+		val="$(< "${!fileVar}")"
+	fi
+	export "$var"="$val"
+	unset "$fileVar"
+}
 
 if [ "${1:0:1}" = '-' ]; then
 	set -- postgres "$@"
 fi
 
+# allow the container to be started with `--user`
+if [ "$1" = 'postgres' ] && [ "$(id -u)" = '0' ]; then
+	mkdir -p "$PGDATA"
+	chown -R postgres "$PGDATA"
+	chmod 700 "$PGDATA"
+
+	mkdir -p /var/run/postgresql
+	chown -R postgres /var/run/postgresql
+	chmod 775 /var/run/postgresql
+
+	# Create the transaction log directory before initdb is run (below) so the directory is owned by the correct user
+	if [ "$POSTGRES_INITDB_WALDIR" ]; then
+		mkdir -p "$POSTGRES_INITDB_WALDIR"
+		chown -R postgres "$POSTGRES_INITDB_WALDIR"
+		chmod 700 "$POSTGRES_INITDB_WALDIR"
+	fi
+
+	exec gosu postgres "$BASH_SOURCE" "$@"
+fi
+
 if [ "$1" = 'postgres' ]; then
 	mkdir -p "$PGDATA"
-	chmod 700 "$PGDATA"
-	chown -R postgres "$PGDATA"
+	chown -R "$(id -u)" "$PGDATA" 2>/dev/null || :
+	chmod 700 "$PGDATA" 2>/dev/null || :
 
-	mkdir -p /run/postgresql
-	chmod g+s /run/postgresql
-	chown -R postgres /run/postgresql
-
-	# look specifically for PGK8s, 
-        #as it is expected in the DB dir if this has been ran before
-	if [  -f ${PGDATA}/PGK8S.txt ]; then
-          echo "Revalidating master host"
-	  if [ "x$MASTER_HOST" != "x" ]; then
-	    RECOVERY_PATH=${PGDATA}/recovery.conf
-	    echo "Master detected : " $MASTER_HOST
-
- 	    if [ -f $RECOVERY_PATH ]; then
-		echo "Re-creating recovery.conf file in ${PGDATA}"
-  		echo "Deleting existing recovery file"
-  		rm $RECOVERY_PATH;
-
-		cat >> ${RECOVERY_PATH}
-		echo "standby_mode = 'on'" >> ${RECOVERY_PATH}
-		echo "primary_conninfo = 'host=${MASTER_HOST} port=5432 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}'" >> ${RECOVERY_PATH}
-		echo "restore_command = 'cp ${PGDATA}/archive/%f %p'" >> ${RECOVERY_PATH}
-		echo "trigger_file = '/tmp/postgresql.trigger.5432'" >> ${RECOVERY_PATH}
-		chmod +rwx ${RECOVERY_PATH}
-		
-		echo "Creation done. . . "
-	    fi
-
-		echo '======================================================================================'
-		echo 'PostgreSQL Database directory appears to contain a database; Skipping initialization  '
-		echo '======================================================================================'
-	  fi
-        else
-	    if [ "x$MASTER_HOST" == "x" ]; then
-                echo "No Master Host Found"
-		eval "gosu postgres initdb $POSTGRES_INITDB_ARGS"
-	    else
-                echo "Master host found : " ${MASTER_HOST}
-            	until ping -c 1 -W 1 ${MASTER_HOST}
-            	do
-                	echo "Waiting for master to ping..."
-                	sleep 1s
-            	done
-            	until gosu postgres pg_basebackup -h ${MASTER_HOST} -p 5432 -D ${PGDATA} -U postgres -w 
-            	do
-                	echo "Waiting for master to connect..."
-                	sleep 1s
-            	done
-                
-                #WAL (Write Ahead Log) setting
-   		echo "setting wal_level to host_standby"
-   		sed -i "s/#wal_level = minimal/wal_level = hot_standby/g"  ${PGDATA}/postgresql.conf
-
-   		#wal sender process
-   		echo "setting max_wal_senders to 3"
-  		sed -i "s/#max_wal_senders = 0/max_wal_senders = 20/g"  ${PGDATA}/postgresql.conf
-  		 
-		echo "setting wal_keep_segments to 8"
-  		sed -i "s/#wal_keep_segments = 0/wal_keep_segments = 10/g"  ${PGDATA}/postgresql.conf
-
-               	#recovery file
-              	#Set to hot standby
- 		echo "setting hot_standby to on"
- 		sed -i "s/#hot_standby = off/ hot_standby = on/g"  ${PGDATA}/postgresql.conf
-
- 		echo "Creating recovery.conf file in ${PGDATA}"
- 		RECOVERY_PATH=${PGDATA}/recovery.conf
- 		cat >> ${RECOVERY_PATH}
- 		echo "standby_mode = 'on'" >> ${RECOVERY_PATH}
- 		echo "primary_conninfo = 'host=${MASTER_HOST} port=5432 user=${POSTGRES_USER} password=${POSTGRES_PASSWORD}'" >> ${RECOVERY_PATH}
- 		echo "restore_command = 'cp ${PGDATA}/archive/%f %p'" >> ${RECOVERY_PATH}
-		echo "trigger_file = '/tmp/postgresql.trigger.5432'" >> ${RECOVERY_PATH}
- 		chmod +rwx ${RECOVERY_PATH}
-
-	    fi
+	# look specifically for PG_VERSION, as it is expected in the DB dir
+	if [ ! -s "$PGDATA/PG_VERSION" ]; then
+		file_env 'POSTGRES_INITDB_ARGS'
+		if [ "$POSTGRES_INITDB_WALDIR" ]; then
+			export POSTGRES_INITDB_ARGS="$POSTGRES_INITDB_ARGS --waldir $POSTGRES_INITDB_WALDIR"
+		fi
+		eval "initdb --username=postgres $POSTGRES_INITDB_ARGS"
 
 		# check password first so we can output the warning before postgres
 		# messes it up
+		file_env 'POSTGRES_PASSWORD'
 		if [ "$POSTGRES_PASSWORD" ]; then
 			pass="PASSWORD '$POSTGRES_PASSWORD'"
 			authMethod=md5
@@ -120,6 +76,7 @@ if [ "$1" = 'postgres' ]; then
 				         Docker's default configuration, this is
 				         effectively any other container on the same
 				         system.
+
 				         Use "-e POSTGRES_PASSWORD=password" to set
 				         it in "docker run".
 				****************************************************
@@ -129,20 +86,20 @@ if [ "$1" = 'postgres' ]; then
 			authMethod=trust
 		fi
 
-		if [ "x$MASTER_HOST" == "x" ]; then
+		{
+			echo
+			echo "host all all all $authMethod"
+		} >> "$PGDATA/pg_hba.conf"
 
-		{ echo; echo "host replication all 0.0.0.0/0 trust"; } | gosu postgres tee -a "$PGDATA/pg_hba.conf" > /dev/null
-		{ echo; echo "host all all 0.0.0.0/0 trust"; } | gosu postgres tee -a "$PGDATA/pg_hba.conf" > /dev/null
-
-		# internal start of server in order to allow set-up using psql-client		
+		# internal start of server in order to allow set-up using psql-client
 		# does not listen on external TCP/IP and waits until start finishes
-		gosu postgres pg_ctl -D "$PGDATA" \
+		PGUSER="${PGUSER:-postgres}" \
+		pg_ctl -D "$PGDATA" \
 			-o "-c listen_addresses='localhost'" \
 			-w start
 
-		: ${POSTGRES_USER:=postgres}
-		: ${POSTGRES_DB:=$POSTGRES_USER}
-		export POSTGRES_USER POSTGRES_DB
+		file_env 'POSTGRES_USER' 'postgres'
+		file_env 'POSTGRES_DB' "$POSTGRES_USER"
 
 		psql=( psql -v ON_ERROR_STOP=1 )
 
@@ -162,8 +119,6 @@ if [ "$1" = 'postgres' ]; then
 			$op USER "$POSTGRES_USER" WITH SUPERUSER $pass ;
 		EOSQL
 		echo
-		
-		fi
 
 		psql+=( --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" )
 
@@ -171,25 +126,29 @@ if [ "$1" = 'postgres' ]; then
 		for f in /docker-entrypoint-initdb.d/*; do
 			case "$f" in
 				*.sh)     echo "$0: running $f"; . "$f" ;;
-				*.sql)    echo "$0: running $f"; "${psql[@]}" < "$f"; echo ;;
+				*.sql)    echo "$0: running $f"; "${psql[@]}" -f "$f"; echo ;;
 				*.sql.gz) echo "$0: running $f"; gunzip -c "$f" | "${psql[@]}"; echo ;;
 				*)        echo "$0: ignoring $f" ;;
 			esac
 			echo
 		done
 
-	if [ "x$MASTER_HOST" == "x" ]; then
-		gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop
-	fi
-		echo '======================================================'
-		echo 'PostgreSQL init process complete; ready for start up.'
-		echo '======================================================'
-	fi
+		PGUSER="${PGUSER:-postgres}" \
+		pg_ctl -D "$PGDATA" -m fast -w stop
 
- 	echo "Creating flag file"
-        touch ${PGDATA}/PGK8S.txt
-	
-	exec gosu postgres "$@"
+		echo
+		echo 'PostgreSQL init process complete; ready for start up.'
+		echo
+	fi
 fi
 
-exec "$@"
+if [ "$1" = postgres ]; then
+	echo "~~ starting PostgreSQL+repmgr..." >&2
+	"$@" &
+	sleep 5	
+	repmgrd --verbose >> /tmp/repmgrd.log 2>&1
+	tail -f /tmp/repmgrd.log
+	# repmgrd -f /etc/repmgr.conf --daemonize --pid-file=/tmp/repmgrd.pid >> /tmp/repmgrd.log 2>&1
+else 
+	exec "$@"
+fi
