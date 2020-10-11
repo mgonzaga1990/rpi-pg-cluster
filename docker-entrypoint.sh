@@ -145,10 +145,11 @@ fi
 if [ "$1" = postgres ]; then
 	echo "~~ starting PostgreSQL+repmgr..." >&2
 	"$@" &
-	sleep 5	
+        
+	sleep 1
 	repmgrd --verbose >> /tmp/repmgrd.log 2>&1
 	tail -f /tmp/repmgrd.log
-	# repmgrd -f /etc/repmgr.conf --daemonize --pid-file=/tmp/repmgrd.pid >> /tmp/repmgrd.log 2>&1
+	#repmgrd -f /etc/repmgr.conf --daemonize --pid-file=/tmp/repmgrd.pid >> /tmp/repmgrd.log 2>&1
 else 
 	exec "$@"
 fi
