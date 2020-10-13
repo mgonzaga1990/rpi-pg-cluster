@@ -10,6 +10,33 @@ fi
 
 echo '~~ 02: repmgr conf' >&2
 
+counter=0
+limit=10
+while [ $counter -lt $limit  ]
+do
+ server="pg-"$counter
+ 
+ if ping -c 5 $server; then
+  echo 'server up:' $server
+  repmgr_installed=$(PGPASSWORD=repmgr psql -qAt -h "$server" -U repmgr repmgr -c "SELECT 1 FROM pg_tables WHERE tablename='nodes'")
+  if [ "${repmgr_installed}" == "1"  ]; then
+    echo 'repmgr found on : ' ${server}
+    host=`(PGPASSWORD=repmgr psql -qAt -h $server -U repmgr -d repmgr -c "select substring(conninfo,6) from repmgr.nodes where type ='primary' and active='t'")`
+    IFS=' ' read -r -a array <<< "$host"
+
+    TMP_HOST="${array[0]}"
+    if [ ! -z "$TMP_HOST" ]; then
+      PGHOST=$TMP_HOST
+      echo 'Primary host detected: ' ${PGHOST}
+      break;
+    fi
+  fi
+ else
+   echo 'server down:' $server
+ fi
+
+ ((counter=counter+1))
+done
 until pg_isready --username=postgres --host=${PGHOST}; do echo "Waiting for Postgres..." && sleep 1; done
 
 if ! [ -e ~/.pgpass ]; then

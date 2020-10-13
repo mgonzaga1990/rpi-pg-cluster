@@ -15,6 +15,8 @@ RUN curl -k -O -L http://ftp.br.debian.org/debian/pool/main/r/repmgr/repmgr-comm
 RUN curl -k -O -L http://ports.ubuntu.com/pool/universe/r/repmgr/postgresql-10-repmgr_4.0.3-1_arm64.deb
 RUN apt install ./postgresql-10-repmgr_4.0.3-1_arm64.deb
 
+RUN apt-get install iputils-ping -y
+
 RUN mkdir -p /home/postgres/; chown postgres:postgres /home/postgres/
 
 COPY postgresql.conf /etc/postgresql/
