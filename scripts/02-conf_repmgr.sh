@@ -14,7 +14,7 @@ counter=0
 limit=10
 while [ $counter -lt $limit  ]
 do
- server="pg-"$counter
+ server="pg-"$counter".pg-headless.default.svc.cluster.local"
  
  if ping -c 5 $server; then
   echo 'server up:' $server
