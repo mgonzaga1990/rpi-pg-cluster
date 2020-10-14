@@ -29,6 +29,19 @@ fi
 
 # allow the container to be started with `--user`
 if [ "$1" = 'postgres' ] && [ "$(id -u)" = '0' ]; then
+
+	counter=0
+	#check if there is atleast 1 node 
+	while [ $counter -lt $MAX_SERVERS ]
+	 do
+	  server="pg-"$counter
+	  if ping -c 5 $server; then
+	    echo 'Existing server found'
+            rm -rf $PGDATA/*
+	  fi
+	  ((counter=counter+1))
+	 done
+
 	mkdir -p "$PGDATA"
 	chown -R postgres "$PGDATA"
 	chmod 700 "$PGDATA"
@@ -48,7 +61,7 @@ if [ "$1" = 'postgres' ] && [ "$(id -u)" = '0' ]; then
 fi
 
 if [ "$1" = 'postgres' ]; then
-	mkdir -p "$PGDATA"
+   	mkdir -p "$PGDATA"
 	chown -R "$(id -u)" "$PGDATA" 2>/dev/null || :
 	chmod 700 "$PGDATA" 2>/dev/null || :
 
@@ -136,14 +149,15 @@ if [ "$1" = 'postgres' ]; then
 		PGUSER="${PGUSER:-postgres}" \
 		pg_ctl -D "$PGDATA" -m fast -w stop
 
-		echo
-		echo 'PostgreSQL init process complete; ready for start up.'
-		echo
-	fi
+		echo 'PostgreSQL init process complete; ready for start up . . . . '
+
+        fi
 fi
 
 if [ "$1" = postgres ]; then
-	echo "~~ starting PostgreSQL+repmgr..." >&2
+        echo '---------------------------------------------------------------'
+	echo "Starting PostgreSQL with Repmgr..."
+        echo '---------------------------------------------------------------'
 	"$@" &
         
 	sleep 1

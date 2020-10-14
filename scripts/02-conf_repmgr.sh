@@ -11,11 +11,11 @@ fi
 echo '~~ 02: repmgr conf' >&2
 
 counter=0
-limit=10
-while [ $counter -lt $limit  ]
+while [ $counter -lt $MAX_SERVERS  ]
 do
- server="pg-"$counter".pg-headless.default.svc.cluster.local"
- 
+ #server="pg-"$counter".pg-headless.default.svc.cluster.local"
+ server="pg-"$counter
+
  if ping -c 5 $server; then
   echo 'server up:' $server
   repmgr_installed=$(PGPASSWORD=repmgr psql -qAt -h "$server" -U repmgr repmgr -c "SELECT 1 FROM pg_tables WHERE tablename='nodes'")
